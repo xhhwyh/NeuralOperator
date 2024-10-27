@@ -225,14 +225,14 @@ class GeoFNO(nn.Module):
 
         aux = xf[...,-2-self.ndim:].permute(0, 2, 1)    # coord, weights, mask
         grid, weights, mask = aux[:, 0:self.ndim, :], aux[:, -2:-1, :], aux[:, -1:, :]
-        # grid: (8, 2, 14641)
-        # weights: (8, 1, 14641)
-        # mask: (8, 1, 14641)
+        # grid:    (batchsize, ndim, 14641)
+        # weights: (batchsize, 1   , 14641)
+        # mask:    (batchsize, 1   , 14641)
 
         bases_c, bases_s, bases_0 = compute_Fourier_bases(grid, self.modes, mask)
-        # bases_c: (8, 544, 14641)
-        # bases_s: (8, 544, 14641)
-        # bases_0: (8,  1 , 14641)
+        # bases_c: (batchsize, mdoes, 14641)
+        # bases_s: (batchsize, modes, 14641)
+        # bases_0: (batchsize, 1    , 14641)
         
         size = int(torch.count_nonzero(mask[0, 0, :]))
         wbases_c, wbases_s, wbases_0 = bases_c*(weights*size), bases_s*(weights*size), bases_0*(weights*size)
@@ -277,12 +277,24 @@ def GeoFNO_train(x_train, y_train, x_test, y_test, config, model, save_model_nam
     
     x_train_fullgrid = x_train
     x_test_fullgrid = x_test
-    mask = x_train[0, :, -1]
-    ind = list(torch.nonzero(mask).squeeze().detach().cpu().numpy())
-    x_train = x_train[:, ind, :]
-    y_train = y_train[:, ind, :]
-    x_test = x_test[:, ind, :]
-    y_test = y_test[:, ind, :]
+    y_train_fullgrid = y_train
+    y_test_fullgrid = y_test
+
+    x_train = torch.zeros((n_train, x_train.shape[1]//2, x_train.shape[2])).to(device)
+    y_train = torch.zeros((n_train, y_train.shape[1]//2, y_train.shape[2])).to(device)
+
+    # get the input and output after picking the mask
+    for n in range(n_train):
+        mask = x_train_fullgrid[n, :, -1]
+        ind = list(torch.nonzero(mask).squeeze().detach().cpu().numpy())
+        x_train[n] = x_train_fullgrid[n, ind, :]
+        y_train[n] = y_train_fullgrid[n, ind, :]
+    
+    for n in range(n_test):
+        mask = x_test_fullgrid[n, :, -1]
+        ind = list(torch.nonzero(mask).squeeze().detach().cpu().numpy())
+        x_test[n] = x_test_fullgrid[n, ind, :]
+        y_test[n] = y_test_fullgrid[n, ind, :]
 
     if normalization_x:
         x_normalizer = UnitGaussianNormalizer(x_train, aux_dim = ndim+2)
@@ -295,7 +307,6 @@ def GeoFNO_train(x_train, y_train, x_test, y_test, config, model, save_model_nam
         y_train = y_normalizer.encode(y_train)
         y_test = y_normalizer.encode(y_test)
         y_normalizer.to(device)
-
 
     train_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(x_train, x_train_fullgrid, y_train), 
                                                batch_size=config['train']['batch_size'], shuffle=True)
@@ -342,7 +353,7 @@ def GeoFNO_train(x_train, y_train, x_test, y_test, config, model, save_model_nam
 
             batch_size_ = x.shape[0]
             optimizer.zero_grad()
-            out = model(x, xf) #.reshape(batch_size_,  -1)
+            out = model(x, xf)
             if normalization_y:
                 out = y_normalizer.decode(out)
                 y = y_normalizer.decode(y)
@@ -359,7 +370,7 @@ def GeoFNO_train(x_train, y_train, x_test, y_test, config, model, save_model_nam
             for x, xf, y in test_loader:
                 x, xf, y = x.to(device), xf.to(device), y.to(device)
                 batch_size_ = x.shape[0]
-                out = model(x, xf) #.reshape(batch_size_,  -1)
+                out = model(x, xf)
 
                 if normalization_y:
                     out = y_normalizer.decode(out)
